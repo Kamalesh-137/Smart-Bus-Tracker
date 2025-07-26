@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SmartBus Tracker - V1 V2 Version</title>
+  <script src="https://api.tomtom.com/maps-sdk-for-web/cdn/6.x/6.19.0/maps/maps-web.min.js"></script>
+  <link rel="stylesheet" href="https://api.tomtom.com/maps-sdk-for-web/cdn/6.x/6.19.0/maps/maps.css" />
+  <style>
+    #map { width: 100%; height: 80vh; }
+    #info { padding: 10px; font-family: Arial, sans-serif; }
+  </style>
+</head>
+<body>
+  <h2>SmartBus Live Tracker</h2>
+  <div id="map"></div>
+  <div id="info">ETA: <span id="eta">Loading...</span></div>
+
+  <script>
+    const BLYNK_TOKEN = 'edq6zElJZd95UtvbLgB2BVKhPBmAiCkR'; // replace with yours
+    const TOMTOM_API_KEY = 'Xe63F8Xz1WcbfNfbzA1aSr6lnZ7ndNXt'; // replace with yours
+
+    const BOARDING_POINT = { lat: 12.917131, lon: 79.880964 }; // your stop
+
+    let map, busMarker, boardingMarker, routeLayer;
+
+    tt.setProductInfo('SmartBus', '1.0');
+    map = tt.map({
+      key: TOMTOM_API_KEY,
+      container: 'map',
+      center: [BOARDING_POINT.lon, BOARDING_POINT.lat],
+      zoom: 12
+    });
+
+    map.addControl(new tt.FullscreenControl());
+    map.addControl(new tt.NavigationControl());
+
+    boardingMarker = new tt.Marker().setLngLat([BOARDING_POINT.lon, BOARDING_POINT.lat]).addTo(map);
+
+    async function getBusLocation() {
+      let lat = await fetch(`https://blynk.cloud/external/api/get?token=${BLYNK_TOKEN}&V1`).then(res => res.text());
+      let lon = await fetch(`https://blynk.cloud/external/api/get?token=${BLYNK_TOKEN}&V2`).then(res => res.text());
+
+      lat = parseFloat(lat);
+      lon = parseFloat(lon);
+
+      return { lat, lon };
+    }
+
+    async function getETA(busLocation) {
+      const url = `https://api.tomtom.com/routing/1/calculateRoute/${busLocation.lat},${busLocation.lon}:${BOARDING_POINT.lat},${BOARDING_POINT.lon}/json?key=${TOMTOM_API_KEY}`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (!data.routes || data.routes.length === 0) {
+        console.log('⚠️ TomTom returned no valid route.');
+        return { etaInMinutes: 'N/A', data: null };
+      }
+
+      const etaInSeconds = data.routes[0].summary.travelTimeInSeconds;
+      const etaInMinutes = Math.round(etaInSeconds / 60);
+      return { etaInMinutes, data };
+    }
+
+    async function update() {
+      const busLoc = await getBusLocation();
+
+      // If GPS is invalid, skip
+      if (isNaN(busLoc.lat) || isNaN(busLoc.lon) || busLoc.lat === 0 || busLoc.lon === 0) {
+        console.log('⚠️ No valid GPS → skipping update.');
+        document.getElementById('eta').innerText = 'N/A';
+        return;
+      }
+
+      const { etaInMinutes, data } = await getETA(busLoc);
+
+      document.getElementById('eta').innerText = etaInMinutes;
+
+      if (etaInMinutes !== 'N/A' && etaInMinutes <= 10) {
+        alert('⚠️ The bus is within 10 mins of your stop!');
+      }
+
+      if (busMarker) busMarker.remove();
+      busMarker = new tt.Marker({ color: 'red' }).setLngLat([busLoc.lon, busLoc.lat]).addTo(map);
+
+      if (routeLayer) map.removeLayer(routeLayer);
+      if (map.getSource('route')) map.removeSource('route');
+
+      if (data) {
+        const geojson = tt.geojson.toFeatureCollection([
+          tt.geojson.parse(data.routes[0].legs[0].points, { lat: 'latitude', lon: 'longitude' })
+        ]);
+
+        map.addLayer({
+          id: 'route',
+          type: 'line',
+          source: { type: 'geojson', data: geojson },
+          paint: { 'line-color': '#0076FF', 'line-width': 4 }
+        });
+
+        routeLayer = 'route';
+
+        map.fitBounds([
+          [busLoc.lon, busLoc.lat],
+          [BOARDING_POINT.lon, BOARDING_POINT.lat]
+        ], { padding: 50 });
+      }
+    }
+
+    update();
+    setInterval(update, 10000);
+  </script>
+</body>
+</html>
