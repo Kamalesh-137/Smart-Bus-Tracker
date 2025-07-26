@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>SmartBus Tracker - V1 V2 Version</title>
+  <title>SmartBus Tracker - Final Version</title>
   <script src="https://api.tomtom.com/maps-sdk-for-web/cdn/6.x/6.19.0/maps/maps-web.min.js"></script>
   <link rel="stylesheet" href="https://api.tomtom.com/maps-sdk-for-web/cdn/6.x/6.19.0/maps/maps.css" />
   <style>
@@ -11,17 +11,20 @@
   </style>
 </head>
 <body>
-  <h2>SmartBus Live Tracker</h2>
+  <h2>SmartBus Live Tracker with Telegram Alerts</h2>
   <div id="map"></div>
   <div id="info">ETA: <span id="eta">Loading...</span></div>
 
   <script>
-    const BLYNK_TOKEN = 'edq6zElJZd95UtvbLgB2BVKhPBmAiCkR'; // replace with yours
-    const TOMTOM_API_KEY = 'Xe63F8Xz1WcbfNfbzA1aSr6lnZ7ndNXt'; // replace with yours
+    const BLYNK_TOKEN = 'edq6zElJZd95UtvbLgB2BVKhPBmAiCkR';
+    const TOMTOM_API_KEY = 'Xe63F8Xz1WcbfNfbzA1aSr6lnZ7ndNXt';
+    const BOT_TOKEN = '8395902865:AAHQA9uLQVLTzVSP4LAazpJyQX0D8aFeNps';
+    const CHAT_ID = '5069285767';
 
-    const BOARDING_POINT = { lat: 12.917131, lon: 79.880964 }; // your stop
+    const BOARDING_POINT = { lat: 12.917131, lon: 79.880964 };
 
     let map, busMarker, boardingMarker, routeLayer;
+    let alertSent = false;
 
     tt.setProductInfo('SmartBus', '1.0');
     map = tt.map({
@@ -36,12 +39,25 @@
 
     boardingMarker = new tt.Marker().setLngLat([BOARDING_POINT.lon, BOARDING_POINT.lat]).addTo(map);
 
+    async function sendTelegramMessage(message) {
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: CHAT_ID,
+          text: message
+        })
+      });
+    }
+
     async function getBusLocation() {
       let lat = await fetch(`https://blynk.cloud/external/api/get?token=${BLYNK_TOKEN}&V1`).then(res => res.text());
       let lon = await fetch(`https://blynk.cloud/external/api/get?token=${BLYNK_TOKEN}&V2`).then(res => res.text());
 
       lat = parseFloat(lat);
       lon = parseFloat(lon);
+
+      console.log("Bus Location:", lat, lon);
 
       return { lat, lon };
     }
@@ -64,7 +80,6 @@
     async function update() {
       const busLoc = await getBusLocation();
 
-      // If GPS is invalid, skip
       if (isNaN(busLoc.lat) || isNaN(busLoc.lon) || busLoc.lat === 0 || busLoc.lon === 0) {
         console.log('⚠️ No valid GPS → skipping update.');
         document.getElementById('eta').innerText = 'N/A';
@@ -75,8 +90,14 @@
 
       document.getElementById('eta').innerText = etaInMinutes;
 
-      if (etaInMinutes !== 'N/A' && etaInMinutes <= 10) {
+      if (etaInMinutes !== 'N/A' && etaInMinutes <= 10 && !alertSent) {
         alert('⚠️ The bus is within 10 mins of your stop!');
+        await sendTelegramMessage('🚍 The bus is within 10 mins of your stop! Be ready!');
+        alertSent = true;
+      }
+
+      if (etaInMinutes > 10) {
+        alertSent = false;
       }
 
       if (busMarker) busMarker.remove();
